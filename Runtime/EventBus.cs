@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace Nopnag.EventBusLib // Updated namespace
 {
@@ -29,6 +30,13 @@ namespace Nopnag.EventBusLib // Updated namespace
   // Static EventBus API (unchanged for backward compatibility)
   public static class EventBus
   {
+    static long _raiseIdCounter;
+
+    internal static long NextRaiseUniqueId()
+    {
+      return Interlocked.Increment(ref _raiseIdCounter);
+    }
+
     public static EventQuery<TEvent> Query<TEvent>() where TEvent : BusEvent
     {
       return EventBus<TEvent>.SelfQuery;
@@ -128,24 +136,19 @@ namespace Nopnag.EventBusLib // Updated namespace
 
     public virtual void Raise(T @event)
     {
+      var isDepthZero = @event.ActiveRaiseDepth == 0;
+      @event.ActiveRaiseDepth++;
+      if (isDepthZero)
+      {
+        @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
+      }
+
       _isRaising = true;
-
-      foreach (var listener in _hash)
+      try
       {
-        listener(@event);
-        if (@event.IsPropagationStopped)
+        foreach (var listener in _hash)
         {
-          _isRaising = false;
-          ProcessOperationQueue();
-          return;
-        }
-      }
-
-      foreach (var type in _dictionary.Keys)
-      {
-        if (_dictionary.TryGetValue(type, out var eventQuery))
-        {
-          eventQuery.Raise(@event);
+          listener(@event);
           if (@event.IsPropagationStopped)
           {
             _isRaising = false;
@@ -153,24 +156,42 @@ namespace Nopnag.EventBusLib // Updated namespace
             return;
           }
         }
-      }
 
-      foreach (var type in _genericDictionary.Keys)
-      {
-        if (_genericDictionary.TryGetValue(type, out var eventQuery))
+        foreach (var type in _dictionary.Keys)
         {
-          eventQuery.Raise(@event);
-          if (@event.IsPropagationStopped)
+          if (_dictionary.TryGetValue(type, out var eventQuery))
           {
-            _isRaising = false;
-            ProcessOperationQueue();
-            return;
+            eventQuery.Raise(@event);
+            if (@event.IsPropagationStopped)
+            {
+              _isRaising = false;
+              ProcessOperationQueue();
+              return;
+            }
           }
         }
-      }
 
-      _isRaising = false;
-      ProcessOperationQueue();
+        foreach (var type in _genericDictionary.Keys)
+        {
+          if (_genericDictionary.TryGetValue(type, out var eventQuery))
+          {
+            eventQuery.Raise(@event);
+            if (@event.IsPropagationStopped)
+            {
+              _isRaising = false;
+              ProcessOperationQueue();
+              return;
+            }
+          }
+        }
+
+        _isRaising = false;
+        ProcessOperationQueue();
+      }
+      finally
+      {
+        @event.ActiveRaiseDepth--;
+      }
     }
 
     public EventQuery<T> Where<TParameterType>(in object value) where TParameterType : IParameter
@@ -234,11 +255,25 @@ namespace Nopnag.EventBusLib // Updated namespace
 
     public override void Raise(T @event)
     {
-      var type = typeof(TParameterType);
-      var value = @event.Get<TParameterType>();
-      EventQuery<T> eventQuery;
-      if (value != null && _valueDictionary.TryGetValue(value, out eventQuery))
-        eventQuery.Raise(@event);
+      var isDepthZero = @event.ActiveRaiseDepth == 0;
+      @event.ActiveRaiseDepth++;
+      if (isDepthZero)
+      {
+        @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
+      }
+
+      try
+      {
+        var type = typeof(TParameterType);
+        var value = @event.Get<TParameterType>();
+        EventQuery<T> eventQuery;
+        if (value != null && _valueDictionary.TryGetValue(value, out eventQuery))
+          eventQuery.Raise(@event);
+      }
+      finally
+      {
+        @event.ActiveRaiseDepth--;
+      }
     }
 
     public EventQuery<T> Where(in object value)
@@ -265,11 +300,25 @@ namespace Nopnag.EventBusLib // Updated namespace
 
     public override void Raise(T @event)
     {
-      var type = typeof(TParameterType);
-      var value = @event.GetGeneric<TParameterType>();
-      EventQuery<T> eventQuery;
-      if (value != null && _valueDictionary.TryGetValue(value, out eventQuery))
-        eventQuery.Raise(@event);
+      var isDepthZero = @event.ActiveRaiseDepth == 0;
+      @event.ActiveRaiseDepth++;
+      if (isDepthZero)
+      {
+        @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
+      }
+
+      try
+      {
+        var type = typeof(TParameterType);
+        var value = @event.GetGeneric<TParameterType>();
+        EventQuery<T> eventQuery;
+        if (value != null && _valueDictionary.TryGetValue(value, out eventQuery))
+          eventQuery.Raise(@event);
+      }
+      finally
+      {
+        @event.ActiveRaiseDepth--;
+      }
     }
 
     public EventQuery<T> Where(in object value)
