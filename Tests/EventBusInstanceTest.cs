@@ -151,5 +151,74 @@ namespace Nopnag.EventBusLib.Tests
       staticListener.Unsubscribe();
       instanceListener.Unsubscribe();
     }
+
+    // -------------------- New tests for RaiseUniqueId and ActiveRaiseDepth (instance/static) --------------------
+
+    [Test]
+    public void LocalEventBus_AssignsRaiseUniqueId_PerRaise()
+    {
+      var localBus = new LocalEventBus();
+      long id1     = 0;
+      long id2     = 0;
+
+      var listener = localBus.On<TestEvent>().Listen(e =>
+      {
+        if (id1 == 0) id1 = e.RaiseUniqueId; else id2 = e.RaiseUniqueId;
+      });
+
+      var e = new TestEvent();
+      localBus.Raise(e);
+      localBus.Raise(e);
+
+      Assert.Greater(id1, 0);
+      Assert.Greater(id2, 0);
+      Assert.AreNotEqual(id1, id2);
+
+      listener.Unsubscribe();
+    }
+
+    [Test]
+    public void LocalEventBus_ChainedFilters_PreserveSameId()
+    {
+      var localBus = new LocalEventBus();
+      var src      = new object();
+      var tgt      = new object();
+
+      long idUnfiltered = 0;
+      long idFiltered   = 0;
+
+      var l1 = localBus.On<TestEvent>().Listen(e => { idUnfiltered = e.RaiseUniqueId; });
+      var l2 = localBus.On<TestEvent>().Where<Source>(src).Where<Target>(tgt).Listen(e => { idFiltered = e.RaiseUniqueId; });
+
+      var e = new TestEvent();
+      e.Set<Source>(src);
+      e.Set<Target>(tgt);
+      localBus.Raise(e);
+
+      Assert.Greater(idUnfiltered, 0);
+      Assert.AreEqual(idUnfiltered, idFiltered);
+
+      l1.Unsubscribe();
+      l2.Unsubscribe();
+    }
+
+    [Test]
+    public void StaticGenericVsStaticWrapper_BothAssignIds()
+    {
+      long idFromGeneric = 0;
+      long idFromWrapper = 0;
+
+      var l = EventBus<TestEvent>.Listen(e => { idFromGeneric = e.RaiseUniqueId; });
+      var e = new TestEvent();
+      EventBus<TestEvent>.Raise(e);
+      Assert.Greater(idFromGeneric, 0);
+      l.Unsubscribe();
+
+      var l2 = EventBus<TestEvent>.Listen(e => { idFromWrapper = e.RaiseUniqueId; });
+      var e2 = new TestEvent();
+      EventBus.Raise(e2);
+      Assert.Greater(idFromWrapper, 0);
+      l2.Unsubscribe();
+    }
   }
 }

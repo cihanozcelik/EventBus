@@ -18,6 +18,14 @@ namespace Nopnag.EventBusLib // Updated namespace
       _genericDict = new Dictionary<Type, object>();
     }
 
+    // A new unique identifier assigned per raise operation.
+    // Readable publicly, but only settable within this assembly (library-internal).
+    public long RaiseUniqueId { get; internal set; }
+
+    // Internal raise depth tracking to ensure RaiseUniqueId is assigned only once
+    // for the outermost raise call, while nested/forwarded raises share the same ID.
+    internal int ActiveRaiseDepth { get; set; }
+
     public virtual bool IsPropagationStopped { get; set; }
 
     public object Get<T>() where T : IParameter

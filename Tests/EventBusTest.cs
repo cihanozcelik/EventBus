@@ -579,5 +579,136 @@ namespace Nopnag.EventBusLib.Tests
       // Ensure l6 is still unsubscribed (implicitly)
       // No need to explicitly check l6 as it calls Assert.Fail() if ever triggered.
     }
+
+    // -------------------- New tests for RaiseUniqueId and dispatch depth --------------------
+
+    public class IdTestEvent : BusEvent
+    {
+    }
+
+    public class NestedEvent : BusEvent
+    {
+    }
+
+    public class MetaInfo // class-based generic parameter (does not implement IParameter)
+    {
+      public string Name;
+    }
+
+    [Test]
+    public void RaiseUniqueId_AssignedOnRaise_NotOnCreation()
+    {
+      var e = new IdTestEvent();
+      Assert.AreEqual(0, e.RaiseUniqueId, "ID should be 0 before first raise");
+
+      long idObservedInListener = 0;
+      var listener = EventBus<IdTestEvent>.Listen(ev => { idObservedInListener = ev.RaiseUniqueId; });
+
+      EventBus<IdTestEvent>.Raise(e);
+
+      Assert.Greater(e.RaiseUniqueId, 0, "ID should be assigned during raise");
+      Assert.AreEqual(e.RaiseUniqueId, idObservedInListener, "Listener should observe same ID");
+
+      listener.Unsubscribe();
+    }
+
+    [Test]
+    public void RaiseUniqueId_DiffersAcrossSeparateRaises_EvenWithSameInstance()
+    {
+      var e = new IdTestEvent();
+      long firstId  = 0;
+      long secondId = 0;
+
+      var listener = EventBus<IdTestEvent>.Listen(ev =>
+      {
+        if (firstId == 0) firstId = ev.RaiseUniqueId; else secondId = ev.RaiseUniqueId;
+      });
+
+      EventBus<IdTestEvent>.Raise(e);
+      EventBus<IdTestEvent>.Raise(e);
+
+      Assert.Greater(firstId, 0);
+      Assert.Greater(secondId, 0);
+      Assert.AreNotEqual(firstId, secondId, "Each top-level raise must have a new ID");
+
+      listener.Unsubscribe();
+    }
+
+    [Test]
+    public void RaiseUniqueId_StaticWrapper_AssignsId()
+    {
+      var e = new IdTestEvent();
+      long idInListener = 0;
+
+      var listener = EventBus<IdTestEvent>.Listen(ev => { idInListener = ev.RaiseUniqueId; });
+
+      EventBus.Raise(e);
+
+      Assert.Greater(e.RaiseUniqueId, 0);
+      Assert.AreEqual(e.RaiseUniqueId, idInListener);
+
+      listener.Unsubscribe();
+    }
+
+    [Test]
+    public void RaiseUniqueId_StableAcrossQueryChain_ParameterFiltering()
+    {
+      var e = new IdTestEvent();
+      e.Set<Amount>(15);
+      long idUnfiltered = 0;
+      long idFiltered   = 0;
+
+      var l1 = EventBus<IdTestEvent>.Listen(ev => { idUnfiltered = ev.RaiseUniqueId; });
+      var l2 = EventBus<IdTestEvent>.Where<Amount>(15).Listen(ev => { idFiltered = ev.RaiseUniqueId; });
+
+      EventBus<IdTestEvent>.Raise(e);
+
+      Assert.Greater(idUnfiltered, 0);
+      Assert.AreEqual(idUnfiltered, idFiltered, "Chain propagation must preserve the same ID");
+
+      l1.Unsubscribe();
+      l2.Unsubscribe();
+    }
+
+    [Test]
+    public void RaiseUniqueId_StableAcrossQueryChain_GenericParameterFiltering()
+    {
+      var meta = new MetaInfo { Name = "meta" };
+      var e    = new IdTestEvent();
+      e.Set(meta);
+
+      long idUnfiltered = 0;
+      long idFiltered   = 0;
+
+      var l1 = EventBus<IdTestEvent>.Listen(ev => { idUnfiltered = ev.RaiseUniqueId; });
+      var l2 = EventBus<IdTestEvent>.Where(meta).Listen(ev => { idFiltered = ev.RaiseUniqueId; });
+
+      EventBus<IdTestEvent>.Raise(e);
+
+      Assert.Greater(idUnfiltered, 0);
+      Assert.AreEqual(idUnfiltered, idFiltered);
+
+      l1.Unsubscribe();
+      l2.Unsubscribe();
+    }
+
+    [Test]
+    public void NestedDifferentEvent_RaisesHaveDifferentIds()
+    {
+      long rootId   = 0;
+      long nestedId = 0;
+
+      var rootListener   = EventBus<IdTestEvent>.Listen(ev => { rootId = ev.RaiseUniqueId; EventBus<NestedEvent>.Raise(new NestedEvent()); });
+      var nestedListener = EventBus<NestedEvent>.Listen(ev => { nestedId = ev.RaiseUniqueId; });
+
+      EventBus<IdTestEvent>.Raise(new IdTestEvent());
+
+      Assert.Greater(rootId, 0);
+      Assert.Greater(nestedId, 0);
+      Assert.AreNotEqual(rootId, nestedId, "Different events in nested raises must get different IDs");
+
+      rootListener.Unsubscribe();
+      nestedListener.Unsubscribe();
+    }
   }
 }
