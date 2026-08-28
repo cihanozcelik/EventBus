@@ -78,6 +78,25 @@ Registering the same delegate more than once is still set-like and invokes it on
 
 Filter dictionaries are retained for average O(1) value routing and do not control iteration order. Listener registration, duplicate lookup, and removal remain average O(1). Dispatch remains O(L + B), where `L` is the number of invoked listeners and `B` is the number of filter-type branches inspected at the traversed query levels; this is the same asymptotic dispatch cost as before. Once query construction and listener registration are complete, a normal reused-event `Raise(...)` performs no managed allocation. Setup and runtime subscription mutation may allocate if their backing tables need to grow.
 
+## Known Performance Constraint: Value-Type Parameter Boxing
+
+The `Set<TParameter>(object value)` query-parameter API stores values as `object`. Passing an `int`, `float`, `bool`, enum, struct, or another value type therefore boxes the value and may create managed garbage on every `Set(...)` call:
+
+```csharp
+reusableEvent.Set<DamageAmount>(15); // The int may be boxed on every call.
+```
+
+This allocation belongs to parameter preparation, not to `Raise(...)` itself. Reusing the event instance does not remove repeated boxing if a new value type is passed to `Set(...)` each time.
+
+For hot gameplay events, prefer strongly typed fields or properties for payload data and use `Set(...)` only for values that EventBus query routing actually needs. If value-based routing is required and the value comes from a stable finite set, reuse a cached boxed value or a stable reference token instead of boxing it for every event:
+
+```csharp
+static readonly object HeavyDamageRoute = 15;
+
+EventBus<DamageEvent>.Where<DamageAmount>(HeavyDamageRoute).Listen(OnHeavyDamage);
+reusableEvent.Set<DamageAmount>(HeavyDamageRoute);
+```
+
 ## Usage Examples
 
 ### 1. Define Event and Parameters
