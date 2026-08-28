@@ -17,6 +17,7 @@ The library supports both **static (global)** and **instance-based (local)** Eve
 *   **Easy Unsubscription:** Provides a listener handle (`IIListener`) for easy removal of subscriptions.
 *   **Dual API Support:** Both static access via `EventBus` class and instance-based usage via `new LocalEventBus()`.
 *   **Event Isolation:** Instance-based LocalEventBuses are completely isolated from each other and from the global static EventBus.
+*   **Reusable Event Safety:** Every top-level raise automatically resets propagation state and assigns a new `RaiseUniqueId`, so a stopped event instance can be reused without a manual reset.
 
 ## API Overview
 
@@ -48,6 +49,21 @@ localBus.Raise(myEvent);
 7.  **Filtered Listening:** Use `Where<ParameterType>(filterValue)` for both static and instance APIs to subscribe only to events where the parameter matches. Chain multiple conditions for more specific subscriptions.
 8.  **Access Parameters:** Inside your listener handler, use `eventInstance.Get<ParameterType>()` to retrieve the value of a parameter that was set via `Set<T>()`.
 9.  **Unsubscribe:** Keep the `IIListener` returned by `Listen()` and call `listener.Unsubscribe()` when you no longer need to listen.
+
+## Propagation Lifecycle and Reusable Events
+
+At the beginning of every top-level dispatch, EventBus automatically calls `ResetPropagation()` on the event and assigns a new `RaiseUniqueId`. This applies to global raises, `LocalEventBus` raises, and direct query raises.
+
+```csharp
+var reusableEvent = new MyEvent();
+
+EventBus<MyEvent>.Raise(reusableEvent); // Starts with propagation enabled.
+EventBus<MyEvent>.Raise(reusableEvent); // Starts enabled again, even if the first raise was stopped.
+```
+
+Listeners may call `StopPropagation()` to stop only the current dispatch path. Callers do not need to call `ResetPropagation()` before reusing an event instance; the next separate raise resets it automatically. Payload fields remain owned by the event producer and must still be prepared or cleared according to the application's lifecycle.
+
+Nested filtered-query dispatch is part of the same raise. It keeps the same `RaiseUniqueId` and does not reset propagation midway through listener or query traversal.
 
 ## Usage Examples
 

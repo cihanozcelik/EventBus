@@ -44,6 +44,11 @@ namespace Nopnag.EventBusLib // Updated namespace
       return default;
     }
 
+    /// <summary>
+    /// Clears the propagation-stopped flag. EventBus calls this automatically at
+    /// the start of every top-level raise; manual calls are only needed when changing
+    /// propagation state outside normal dispatch.
+    /// </summary>
     public virtual void ResetPropagation()
     {
       IsPropagationStopped = false;
@@ -66,4 +71,4 @@ namespace Nopnag.EventBusLib // Updated namespace
       IsPropagationStopped = true;
     }
   }
-} 
+}

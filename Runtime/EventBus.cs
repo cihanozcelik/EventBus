@@ -42,6 +42,10 @@ namespace Nopnag.EventBusLib // Updated namespace
       return EventBus<TEvent>.SelfQuery;
     }
 
+    /// <summary>
+    /// Raises an event globally. The outermost dispatch resets propagation and
+    /// assigns a new RaiseUniqueId before invoking listeners.
+    /// </summary>
     public static void Raise<TEvent>(TEvent busEvent) where TEvent : BusEvent
     {
       EventBus<TEvent>.Raise(busEvent);
@@ -62,6 +66,10 @@ namespace Nopnag.EventBusLib // Updated namespace
       return SelfQuery.Listen(listener);
     }
 
+    /// <summary>
+    /// Raises an event globally. The outermost dispatch resets propagation and
+    /// assigns a new RaiseUniqueId before invoking listeners.
+    /// </summary>
     public static void Raise(T @event)
     {
       if (SelfQuery == null) SelfQuery = new EventQuery<T>();
@@ -101,6 +109,10 @@ namespace Nopnag.EventBusLib // Updated namespace
       return (EventQuery<TEvent>)_eventQueries[eventType];
     }
 
+    /// <summary>
+    /// Raises an event on this local bus. The outermost dispatch resets propagation
+    /// and assigns a new RaiseUniqueId before invoking listeners.
+    /// </summary>
     public void Raise<TEvent>(TEvent busEvent) where TEvent : BusEvent
     {
       On<TEvent>().Raise(busEvent);
@@ -134,6 +146,10 @@ namespace Nopnag.EventBusLib // Updated namespace
       return new Listener(() => UnsubscribeInternal(@event));
     }
 
+    /// <summary>
+    /// Dispatches an event through this query. The outermost query dispatch resets
+    /// propagation and assigns a new RaiseUniqueId. Nested query dispatch preserves both.
+    /// </summary>
     public virtual void Raise(T @event)
     {
       var isDepthZero = @event.ActiveRaiseDepth == 0;
