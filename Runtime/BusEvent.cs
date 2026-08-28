@@ -44,6 +44,11 @@ namespace Nopnag.EventBusLib // Updated namespace
       return default;
     }
 
+    /// <summary>
+    /// Clears the propagation-stopped flag. EventBus calls this automatically at
+    /// the start of every top-level raise; manual calls are only needed when changing
+    /// propagation state outside normal dispatch.
+    /// </summary>
     public virtual void ResetPropagation()
     {
       IsPropagationStopped = false;
@@ -55,6 +60,14 @@ namespace Nopnag.EventBusLib // Updated namespace
       return this;
     }
 
+    /// <summary>
+    /// Sets a queryable parameter value. Because the value is stored as object, passing
+    /// a value type such as int, float, bool, or an enum boxes that value and may allocate
+    /// on every call. For hot or reusable events, keep gameplay payload in strongly typed
+    /// event fields and use this API only for values that are actually needed for routing.
+    /// A cached boxed value or stable reference token can be used when value-based routing
+    /// is required without repeated boxing.
+    /// </summary>
     public BusEvent Set<T>(object value) where T : IParameter
     {
       _dict[typeof(T)] = value;
@@ -66,4 +79,4 @@ namespace Nopnag.EventBusLib // Updated namespace
       IsPropagationStopped = true;
     }
   }
-} 
+}

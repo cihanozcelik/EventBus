@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 
 namespace Nopnag.EventBusLib // Updated namespace
@@ -42,6 +41,10 @@ namespace Nopnag.EventBusLib // Updated namespace
       return EventBus<TEvent>.SelfQuery;
     }
 
+    /// <summary>
+    /// Raises an event globally. The outermost dispatch resets propagation and
+    /// assigns a new RaiseUniqueId before invoking listeners.
+    /// </summary>
     public static void Raise<TEvent>(TEvent busEvent) where TEvent : BusEvent
     {
       EventBus<TEvent>.Raise(busEvent);
@@ -62,6 +65,10 @@ namespace Nopnag.EventBusLib // Updated namespace
       return SelfQuery.Listen(listener);
     }
 
+    /// <summary>
+    /// Raises an event globally. The outermost dispatch resets propagation and
+    /// assigns a new RaiseUniqueId before invoking listeners.
+    /// </summary>
     public static void Raise(T @event)
     {
       if (SelfQuery == null) SelfQuery = new EventQuery<T>();
@@ -101,6 +108,10 @@ namespace Nopnag.EventBusLib // Updated namespace
       return (EventQuery<TEvent>)_eventQueries[eventType];
     }
 
+    /// <summary>
+    /// Raises an event on this local bus. The outermost dispatch resets propagation
+    /// and assigns a new RaiseUniqueId before invoking listeners.
+    /// </summary>
     public void Raise<TEvent>(TEvent busEvent) where TEvent : BusEvent
     {
       On<TEvent>().Raise(busEvent);
@@ -109,91 +120,114 @@ namespace Nopnag.EventBusLib // Updated namespace
 
   public class EventQuery<T> where T : BusEvent
   {
+    const int InitialCapacity = 4;
+
+    enum PendingOperationType : byte
+    {
+      Subscribe,
+      Unsubscribe
+    }
+
+    struct PendingOperation
+    {
+      public PendingOperationType Type;
+      public ListenerDelegate<T> Listener;
+
+      public PendingOperation(PendingOperationType type, ListenerDelegate<T> listener)
+      {
+        Type = type;
+        Listener = listener;
+      }
+    }
+
     readonly Dictionary<Type, EventQuery<T>> _dictionary;
     readonly Dictionary<Type, EventQuery<T>> _genericDictionary;
-    readonly HashSet<ListenerDelegate<T>> _hash;
-    bool _isRaising;
-    readonly Queue<Action> _operationQueue;
+    readonly List<EventQuery<T>> _orderedQueries;
+    readonly List<EventQuery<T>> _orderedGenericQueries;
+    readonly OrderedListenerSet<T> _listeners;
+    PendingOperation[] _pendingOperations;
+    int _pendingOperationCount;
+    int _raiseDepth;
 
     public EventQuery()
     {
       _dictionary = new Dictionary<Type, EventQuery<T>>();
       _genericDictionary = new Dictionary<Type, EventQuery<T>>();
-      _hash = new HashSet<ListenerDelegate<T>>();
-      _operationQueue = new Queue<Action>();
+      _orderedQueries = new List<EventQuery<T>>();
+      _orderedGenericQueries = new List<EventQuery<T>>();
+      _listeners = new OrderedListenerSet<T>(InitialCapacity);
+      _pendingOperations = new PendingOperation[InitialCapacity];
     }
 
+    /// <summary>
+    /// Registers a listener once on this query. Listeners are invoked in registration
+    /// order. Registering the same delegate again has no effect; unsubscribing and then
+    /// registering it again appends it to the end. Mutations requested while this query
+    /// is dispatching are applied after its outermost dispatch completes.
+    /// </summary>
     public virtual IIListener Listen(ListenerDelegate<T> @event)
     {
-      Action subscribeAction = () => _hash.Add(@event);
-      if (_isRaising)
-        _operationQueue.Enqueue(subscribeAction);
+      if (_raiseDepth > 0)
+        EnqueueOperation(PendingOperationType.Subscribe, @event);
       else
-        subscribeAction();
+        _listeners.Add(@event);
 
       return new Listener(() => UnsubscribeInternal(@event));
     }
 
+    /// <summary>
+    /// Dispatches an event through this query. The outermost query dispatch resets
+    /// propagation and assigns a new RaiseUniqueId. Nested query dispatch preserves both.
+    /// Direct listeners run in registration order, followed by IParameter filter branches
+    /// and then class filter branches, each in first-definition order.
+    /// </summary>
     public virtual void Raise(T @event)
     {
       var isDepthZero = @event.ActiveRaiseDepth == 0;
       @event.ActiveRaiseDepth++;
       if (isDepthZero)
       {
+        @event.ResetPropagation();
         @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
       }
 
-      _isRaising = true;
+      _raiseDepth++;
       try
       {
-        foreach (var listener in _hash)
+        if (!_listeners.Raise(@event)) return;
+
+        var queryCount = _orderedQueries.Count;
+        for (var i = 0; i < queryCount; i++)
         {
-          listener(@event);
+          _orderedQueries[i].Raise(@event);
           if (@event.IsPropagationStopped)
           {
-            _isRaising = false;
-            ProcessOperationQueue();
             return;
           }
         }
 
-        foreach (var type in _dictionary.Keys)
+        var genericQueryCount = _orderedGenericQueries.Count;
+        for (var i = 0; i < genericQueryCount; i++)
         {
-          if (_dictionary.TryGetValue(type, out var eventQuery))
+          _orderedGenericQueries[i].Raise(@event);
+          if (@event.IsPropagationStopped)
           {
-            eventQuery.Raise(@event);
-            if (@event.IsPropagationStopped)
-            {
-              _isRaising = false;
-              ProcessOperationQueue();
-              return;
-            }
+            return;
           }
         }
-
-        foreach (var type in _genericDictionary.Keys)
-        {
-          if (_genericDictionary.TryGetValue(type, out var eventQuery))
-          {
-            eventQuery.Raise(@event);
-            if (@event.IsPropagationStopped)
-            {
-              _isRaising = false;
-              ProcessOperationQueue();
-              return;
-            }
-          }
-        }
-
-        _isRaising = false;
-        ProcessOperationQueue();
       }
       finally
       {
+        _raiseDepth--;
         @event.ActiveRaiseDepth--;
+        if (_raiseDepth == 0) ProcessPendingOperations();
       }
     }
 
+    /// <summary>
+    /// Gets the query for an IParameter value. Parameter-type branches are dispatched
+    /// deterministically in the order in which each type was first defined.
+    /// </summary>
     public EventQuery<T> Where<TParameterType>(in object value) where TParameterType : IParameter
     {
       var parameterType = typeof(TParameterType);
@@ -202,6 +236,7 @@ namespace Nopnag.EventBusLib // Updated namespace
       {
         pq = new ParameterQuery<T, TParameterType>();
         _dictionary[parameterType] = pq;
+        _orderedQueries.Add(pq);
         return pq.Where(value);
       }
 
@@ -209,6 +244,10 @@ namespace Nopnag.EventBusLib // Updated namespace
       return pq.Where(value);
     }
 
+    /// <summary>
+    /// Gets the query for a class parameter value. Class-parameter branches are dispatched
+    /// deterministically in the order in which each type was first defined.
+    /// </summary>
     public EventQuery<T> Where<TParameterType>(in TParameterType value) where TParameterType : class
     {
       var parameterType = typeof(TParameterType);
@@ -217,6 +256,7 @@ namespace Nopnag.EventBusLib // Updated namespace
       {
         pq = new GenericParameterQuery<T, TParameterType>();
         _genericDictionary[parameterType] = pq;
+        _orderedGenericQueries.Add(pq);
         return pq.Where(value);
       }
 
@@ -224,22 +264,35 @@ namespace Nopnag.EventBusLib // Updated namespace
       return pq.Where(value);
     }
 
-    void ProcessOperationQueue()
+    void ProcessPendingOperations()
     {
-      while (_operationQueue.Count > 0)
+      var operationCount = _pendingOperationCount;
+      _pendingOperationCount = 0;
+      for (var i = 0; i < operationCount; i++)
       {
-        var action = _operationQueue.Dequeue();
-        action();
+        var operation = _pendingOperations[i];
+        _pendingOperations[i] = default(PendingOperation);
+        if (operation.Type == PendingOperationType.Subscribe)
+          _listeners.Add(operation.Listener);
+        else
+          _listeners.Remove(operation.Listener);
       }
+    }
+
+    void EnqueueOperation(PendingOperationType type, ListenerDelegate<T> listener)
+    {
+      if (_pendingOperationCount == _pendingOperations.Length)
+        Array.Resize(ref _pendingOperations, _pendingOperations.Length * 2);
+
+      _pendingOperations[_pendingOperationCount++] = new PendingOperation(type, listener);
     }
 
     void UnsubscribeInternal(ListenerDelegate<T> @event)
     {
-      Action unsubscribeAction = () => _hash.Remove(@event);
-      if (_isRaising)
-        _operationQueue.Enqueue(unsubscribeAction);
+      if (_raiseDepth > 0)
+        EnqueueOperation(PendingOperationType.Unsubscribe, @event);
       else
-        unsubscribeAction();
+        _listeners.Remove(@event);
     }
   }
 
@@ -259,6 +312,7 @@ namespace Nopnag.EventBusLib // Updated namespace
       @event.ActiveRaiseDepth++;
       if (isDepthZero)
       {
+        @event.ResetPropagation();
         @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
       }
 
@@ -304,6 +358,7 @@ namespace Nopnag.EventBusLib // Updated namespace
       @event.ActiveRaiseDepth++;
       if (isDepthZero)
       {
+        @event.ResetPropagation();
         @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
       }
 
@@ -332,4 +387,4 @@ namespace Nopnag.EventBusLib // Updated namespace
       return _valueDictionary[value];
     }
   }
-} 
+}

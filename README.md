@@ -17,6 +17,7 @@ The library supports both **static (global)** and **instance-based (local)** Eve
 *   **Easy Unsubscription:** Provides a listener handle (`IIListener`) for easy removal of subscriptions.
 *   **Dual API Support:** Both static access via `EventBus` class and instance-based usage via `new LocalEventBus()`.
 *   **Event Isolation:** Instance-based LocalEventBuses are completely isolated from each other and from the global static EventBus.
+*   **Reusable Event Safety:** Every top-level raise automatically resets propagation state and assigns a new `RaiseUniqueId`, so a stopped event instance can be reused without a manual reset.
 
 ## API Overview
 
@@ -48,6 +49,53 @@ localBus.Raise(myEvent);
 7.  **Filtered Listening:** Use `Where<ParameterType>(filterValue)` for both static and instance APIs to subscribe only to events where the parameter matches. Chain multiple conditions for more specific subscriptions.
 8.  **Access Parameters:** Inside your listener handler, use `eventInstance.Get<ParameterType>()` to retrieve the value of a parameter that was set via `Set<T>()`.
 9.  **Unsubscribe:** Keep the `IIListener` returned by `Listen()` and call `listener.Unsubscribe()` when you no longer need to listen.
+
+## Propagation Lifecycle and Reusable Events
+
+At the beginning of every top-level dispatch, EventBus automatically calls `ResetPropagation()` on the event and assigns a new `RaiseUniqueId`. This applies to global raises, `LocalEventBus` raises, and direct query raises.
+
+```csharp
+var reusableEvent = new MyEvent();
+
+EventBus<MyEvent>.Raise(reusableEvent); // Starts with propagation enabled.
+EventBus<MyEvent>.Raise(reusableEvent); // Starts enabled again, even if the first raise was stopped.
+```
+
+Listeners may call `StopPropagation()` to stop only the current dispatch path. Callers do not need to call `ResetPropagation()` before reusing an event instance; the next separate raise resets it automatically. Payload fields remain owned by the event producer and must still be prepared or cleared according to the application's lifecycle.
+
+Nested filtered-query dispatch is part of the same raise. It keeps the same `RaiseUniqueId` and does not reset propagation midway through listener or query traversal.
+
+## Deterministic Dispatch Order
+
+EventBus dispatch order does not depend on hash-table enumeration:
+
+1. Listeners attached to the current query run in `Listen(...)` registration order.
+2. `IParameter` filter branches run in the order in which each parameter type was first introduced with `Where(...)`.
+3. Class-parameter filter branches then run in their own first-definition order.
+4. The same rules apply again at every level of a chained query.
+
+Registering the same delegate more than once is still set-like and invokes it only once. If a listener is unsubscribed and later subscribed again, it is appended to the end of that query's order. Subscribe and unsubscribe operations requested against a query while that query is dispatching are deferred until its outermost active raise completes. Pending operations are also finalized if a listener throws, leaving the query usable after the caller handles the exception.
+
+Filter dictionaries are retained for average O(1) value routing and do not control iteration order. Listener registration, duplicate lookup, and removal remain average O(1). Dispatch remains O(L + B), where `L` is the number of invoked listeners and `B` is the number of filter-type branches inspected at the traversed query levels; this is the same asymptotic dispatch cost as before. Once query construction and listener registration are complete, a normal reused-event `Raise(...)` performs no managed allocation. Setup and runtime subscription mutation may allocate if their backing tables need to grow.
+
+## Known Performance Constraint: Value-Type Parameter Boxing
+
+The `Set<TParameter>(object value)` query-parameter API stores values as `object`. Passing an `int`, `float`, `bool`, enum, struct, or another value type therefore boxes the value and may create managed garbage on every `Set(...)` call:
+
+```csharp
+reusableEvent.Set<DamageAmount>(15); // The int may be boxed on every call.
+```
+
+This allocation belongs to parameter preparation, not to `Raise(...)` itself. Reusing the event instance does not remove repeated boxing if a new value type is passed to `Set(...)` each time.
+
+For hot gameplay events, prefer strongly typed fields or properties for payload data and use `Set(...)` only for values that EventBus query routing actually needs. If value-based routing is required and the value comes from a stable finite set, reuse a cached boxed value or a stable reference token instead of boxing it for every event:
+
+```csharp
+static readonly object HeavyDamageRoute = 15;
+
+EventBus<DamageEvent>.Where<DamageAmount>(HeavyDamageRoute).Listen(OnHeavyDamage);
+reusableEvent.Set<DamageAmount>(HeavyDamageRoute);
+```
 
 ## Usage Examples
 
