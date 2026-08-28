@@ -65,6 +65,19 @@ Listeners may call `StopPropagation()` to stop only the current dispatch path. C
 
 Nested filtered-query dispatch is part of the same raise. It keeps the same `RaiseUniqueId` and does not reset propagation midway through listener or query traversal.
 
+## Deterministic Dispatch Order
+
+EventBus dispatch order does not depend on hash-table enumeration:
+
+1. Listeners attached to the current query run in `Listen(...)` registration order.
+2. `IParameter` filter branches run in the order in which each parameter type was first introduced with `Where(...)`.
+3. Class-parameter filter branches then run in their own first-definition order.
+4. The same rules apply again at every level of a chained query.
+
+Registering the same delegate more than once is still set-like and invokes it only once. If a listener is unsubscribed and later subscribed again, it is appended to the end of that query's order. Subscribe and unsubscribe operations requested against a query while that query is dispatching are deferred until its outermost active raise completes. Pending operations are also finalized if a listener throws, leaving the query usable after the caller handles the exception.
+
+Filter dictionaries are retained for average O(1) value routing and do not control iteration order. Listener registration, duplicate lookup, and removal remain average O(1). Dispatch remains O(L + B), where `L` is the number of invoked listeners and `B` is the number of filter-type branches inspected at the traversed query levels; this is the same asymptotic dispatch cost as before. Once query construction and listener registration are complete, a normal reused-event `Raise(...)` performs no managed allocation. Setup and runtime subscription mutation may allocate if their backing tables need to grow.
+
 ## Usage Examples
 
 ### 1. Define Event and Parameters
