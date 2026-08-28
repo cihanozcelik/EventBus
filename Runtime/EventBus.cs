@@ -140,6 +140,7 @@ namespace Nopnag.EventBusLib // Updated namespace
       @event.ActiveRaiseDepth++;
       if (isDepthZero)
       {
+        @event.ResetPropagation();
         @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
       }
 
@@ -259,6 +260,7 @@ namespace Nopnag.EventBusLib // Updated namespace
       @event.ActiveRaiseDepth++;
       if (isDepthZero)
       {
+        @event.ResetPropagation();
         @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
       }
 
@@ -304,6 +306,7 @@ namespace Nopnag.EventBusLib // Updated namespace
       @event.ActiveRaiseDepth++;
       if (isDepthZero)
       {
+        @event.ResetPropagation();
         @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
       }
 
@@ -332,4 +335,4 @@ namespace Nopnag.EventBusLib // Updated namespace
       return _valueDictionary[value];
     }
   }
-} 
+}
