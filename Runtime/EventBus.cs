@@ -51,6 +51,43 @@ namespace Nopnag.EventBusLib // Updated namespace
     }
   }
 
+  internal static class EventDispatch
+  {
+    internal readonly struct Scope : IDisposable
+    {
+      readonly BusEvent _event;
+
+      internal Scope(BusEvent busEvent)
+      {
+        _event = busEvent;
+        var isDepthZero = busEvent.ActiveRaiseDepth == 0;
+        busEvent.ActiveRaiseDepth++;
+        if (isDepthZero)
+        {
+          busEvent.ResetPropagation();
+          busEvent.RaiseUniqueId = EventBus.NextRaiseUniqueId();
+        }
+      }
+
+      public void Dispose()
+      {
+        _event.ActiveRaiseDepth--;
+      }
+    }
+
+    internal static Scope Enter(BusEvent busEvent)
+    {
+      return new Scope(busEvent);
+    }
+
+    internal static void RaiseUnobserved(BusEvent busEvent)
+    {
+      using (Enter(busEvent))
+      {
+      }
+    }
+  }
+
   public static class EventBus<T> where T : BusEvent
   {
     public static EventQuery<T> SelfQuery;
@@ -114,7 +151,13 @@ namespace Nopnag.EventBusLib // Updated namespace
     /// </summary>
     public void Raise<TEvent>(TEvent busEvent) where TEvent : BusEvent
     {
-      On<TEvent>().Raise(busEvent);
+      if (_eventQueries.TryGetValue(typeof(TEvent), out var query))
+      {
+        ((EventQuery<TEvent>)query).Raise(busEvent);
+        return;
+      }
+
+      EventDispatch.RaiseUnobserved(busEvent);
     }
   }
 
@@ -183,44 +226,38 @@ namespace Nopnag.EventBusLib // Updated namespace
     /// </summary>
     public virtual void Raise(T @event)
     {
-      var isDepthZero = @event.ActiveRaiseDepth == 0;
-      @event.ActiveRaiseDepth++;
-      if (isDepthZero)
+      using (EventDispatch.Enter(@event))
       {
-        @event.ResetPropagation();
-        @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
-      }
-
-      _raiseDepth++;
-      try
-      {
-        if (!_listeners.Raise(@event)) return;
-
-        var queryCount = _orderedQueries.Count;
-        for (var i = 0; i < queryCount; i++)
+        _raiseDepth++;
+        try
         {
-          _orderedQueries[i].Raise(@event);
-          if (@event.IsPropagationStopped)
+          if (!_listeners.Raise(@event)) return;
+
+          var queryCount = _orderedQueries.Count;
+          for (var i = 0; i < queryCount; i++)
           {
-            return;
+            _orderedQueries[i].Raise(@event);
+            if (@event.IsPropagationStopped)
+            {
+              return;
+            }
+          }
+
+          var genericQueryCount = _orderedGenericQueries.Count;
+          for (var i = 0; i < genericQueryCount; i++)
+          {
+            _orderedGenericQueries[i].Raise(@event);
+            if (@event.IsPropagationStopped)
+            {
+              return;
+            }
           }
         }
-
-        var genericQueryCount = _orderedGenericQueries.Count;
-        for (var i = 0; i < genericQueryCount; i++)
+        finally
         {
-          _orderedGenericQueries[i].Raise(@event);
-          if (@event.IsPropagationStopped)
-          {
-            return;
-          }
+          _raiseDepth--;
+          if (_raiseDepth == 0) ProcessPendingOperations();
         }
-      }
-      finally
-      {
-        _raiseDepth--;
-        @event.ActiveRaiseDepth--;
-        if (_raiseDepth == 0) ProcessPendingOperations();
       }
     }
 
@@ -308,25 +345,13 @@ namespace Nopnag.EventBusLib // Updated namespace
 
     public override void Raise(T @event)
     {
-      var isDepthZero = @event.ActiveRaiseDepth == 0;
-      @event.ActiveRaiseDepth++;
-      if (isDepthZero)
-      {
-        @event.ResetPropagation();
-        @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
-      }
-
-      try
+      using (EventDispatch.Enter(@event))
       {
         var type = typeof(TParameterType);
         var value = @event.Get<TParameterType>();
         EventQuery<T> eventQuery;
         if (value != null && _valueDictionary.TryGetValue(value, out eventQuery))
           eventQuery.Raise(@event);
-      }
-      finally
-      {
-        @event.ActiveRaiseDepth--;
       }
     }
 
@@ -354,25 +379,13 @@ namespace Nopnag.EventBusLib // Updated namespace
 
     public override void Raise(T @event)
     {
-      var isDepthZero = @event.ActiveRaiseDepth == 0;
-      @event.ActiveRaiseDepth++;
-      if (isDepthZero)
-      {
-        @event.ResetPropagation();
-        @event.RaiseUniqueId = EventBus.NextRaiseUniqueId();
-      }
-
-      try
+      using (EventDispatch.Enter(@event))
       {
         var type = typeof(TParameterType);
         var value = @event.GetGeneric<TParameterType>();
         EventQuery<T> eventQuery;
         if (value != null && _valueDictionary.TryGetValue(value, out eventQuery))
           eventQuery.Raise(@event);
-      }
-      finally
-      {
-        @event.ActiveRaiseDepth--;
       }
     }
 
