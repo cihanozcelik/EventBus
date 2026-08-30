@@ -17,6 +17,10 @@ namespace Nopnag.EventBusLib.Tests
       public string Message { get; set; }
     }
 
+    public sealed class UnobservedEvent : BusEvent
+    {
+    }
+
     [Test]
     public void BackwardCompatibility_StaticAPIStillWorks()
     {
@@ -175,6 +179,45 @@ namespace Nopnag.EventBusLib.Tests
       Assert.AreNotEqual(id1, id2);
 
       listener.Unsubscribe();
+    }
+
+    [Test]
+    public void LocalEventBus_FirstRaiseWithoutQuery_DoesNotAllocate()
+    {
+      var warmupBus = new LocalEventBus();
+      var warmupEvent = new UnobservedEvent();
+      warmupBus.Raise(warmupEvent);
+
+      var localBus = new LocalEventBus();
+      var unobservedEvent = new UnobservedEvent();
+      System.GC.GetAllocatedBytesForCurrentThread();
+      var allocatedBefore = System.GC.GetAllocatedBytesForCurrentThread();
+
+      localBus.Raise(unobservedEvent);
+
+      var allocatedBytes = System.GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+      Assert.AreEqual(0, allocatedBytes,
+        "An unobserved local event must not create query topology during Raise.");
+    }
+
+    [Test]
+    public void LocalEventBus_UnobservedRaise_PreservesDispatchLifecycle()
+    {
+      var localBus = new LocalEventBus();
+      var unobservedEvent = new UnobservedEvent();
+      unobservedEvent.StopPropagation();
+
+      localBus.Raise(unobservedEvent);
+
+      var firstRaiseId = unobservedEvent.RaiseUniqueId;
+      Assert.Greater(firstRaiseId, 0);
+      Assert.IsFalse(unobservedEvent.IsPropagationStopped);
+
+      unobservedEvent.StopPropagation();
+      localBus.Raise(unobservedEvent);
+
+      Assert.AreNotEqual(firstRaiseId, unobservedEvent.RaiseUniqueId);
+      Assert.IsFalse(unobservedEvent.IsPropagationStopped);
     }
 
     [Test]

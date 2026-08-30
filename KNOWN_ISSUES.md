@@ -444,35 +444,39 @@ it is only a transient dispatch discriminator.
 **Severity:** High  
 **Status:** Test-claim limitation
 
-The existing allocation test prepares a class-marker query, listener, and reused event,
-warms the path, then measures repeated `Raise`. It does not prove allocation freedom
-for event construction or preparation, first static/local use, listener registration,
-query creation, subscription mutation, value-type routes, virtual user code, or
-container growth.
+The existing deterministic-dispatch allocation test prepares a class-marker query,
+listener, and reused event, warms the path, then measures repeated `Raise`. A separate
+local-bus regression test covers the first unobserved raise without query creation.
+Neither test proves allocation freedom for event construction or preparation, first
+static use, `LocalEventBus.On<T>`, listener registration, query creation, subscription
+mutation, value-type routes, virtual user code, or container growth.
 
 Known allocation points include:
 
 - `BusEvent` construction allocates two dictionaries.
 - `EventQuery` construction allocates dictionaries, lists, listener storage, and a
   pending-operation array.
-- First `LocalEventBus.On<T>()` or local raise for an event type creates a query.
+- First `LocalEventBus.On<T>()` for an event type creates a query. An unobserved local
+  raise does not create query topology.
 - Every `Listen` creates an unsubscribe closure and returns a struct through
   `IIListener`, which can box.
 - Listener storage, query dictionaries, and pending-operation arrays resize.
 - Value-type arguments passed through object route APIs box.
 - An absent struct route can box during dispatch as described by EB-001.
 
-**Safe usage:** Build and warm the complete query/listener topology before interactive
-runtime, reuse event instances, use stable reference route tokens, and confirm the real
-path with the Unity Profiler. Do not claim that arbitrary `Raise` usage is allocation
-free.
+**Safe usage:** Build and warm the complete topology for observed event types before
+interactive runtime, reuse event instances, use stable reference route tokens, and
+confirm the real path with the Unity Profiler. Buses that do not observe an event type
+do not need an empty root solely to let that event pass through scoped propagation. Do
+not claim that arbitrary `Raise` usage is allocation free.
 
 **Evidence:**
 
 - `Runtime/BusEvent.cs:12-19,63-74`
-- `Runtime/EventBus.cs:94-117,152-175,227-287`
+- `Runtime/EventBus.cs:54-88,128-160,164-262,336-402`
 - `Runtime/OrderedListenerSet.cs:31-35,125-153`
 - `Tests/DeterministicDispatchTests.cs:191-212`
+- `Tests/EventBusInstanceTest.cs:184-221`
 
 ### EB-020 — Runtime pending-operation growth can allocate during dispatch
 
@@ -528,4 +532,3 @@ The existing suite provides useful evidence for these paths:
 
 These tests do not close the known issues above and must not be generalized to null,
 concurrent, reentrant same-instance, dynamically mutating, or unprepared paths.
-

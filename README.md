@@ -504,9 +504,12 @@ points have inconsistent null behavior and existing listeners can be disconnecte
 |---|---|
 | constructor | Creates an empty isolated event-type registry. |
 | `On<TEvent>()` | Get or lazily create the exact local root query. |
-| `Raise<TEvent>(TEvent)` | Publish through that local root, creating it if needed. |
+| `Raise<TEvent>(TEvent)` | Publish through an existing local root, or dispatch unobserved without creating one. |
 
-The first `On<T>` or first raise of an event type allocates the root query.
+The first `On<T>` for an event type allocates its root query. Raising an event type
+that has no local root still resets propagation and assigns a new `RaiseUniqueId`, but
+does not create query topology. Listener registration calls `On<T>` and therefore owns
+that topology creation before publication.
 
 ### `EventQuery<TEvent>`
 
@@ -566,6 +569,8 @@ For a zero-allocation runtime path:
 - use a bounded set of stable reference tokens or cached boxed route values;
 - create all local roots, queries, listeners, handles, and route branches before
   interactive runtime;
+- allow unobserved event types to pass through local buses without creating empty
+  roots on buses that have no listeners for those types;
 - prewarm the actual concrete publication and listener path;
 - prohibit runtime query/subscription mutation;
 - verify the warmed path in the Unity Profiler and on the target device.
@@ -612,6 +617,7 @@ The repository tests provide evidence for:
 
 - static and local basic publication;
 - local delivery isolation;
+- unobserved local publication without query-topology allocation;
 - marker and class query matching on covered inputs;
 - chained filters on covered paths;
 - direct listener registration order and per-query duplicate suppression;
